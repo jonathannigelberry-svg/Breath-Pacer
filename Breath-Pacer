@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Relaxation Breath Pacer</title>
+<style>
+  :root{--bg:#0f1220;--fg:#e6eef8;--muted:#99a8c0;--accent:#7cc7b3;--p:0;}
+  html,body{height:100%;margin:0;font-family:system-ui;display:grid;place-items:center;
+    background:radial-gradient(1200px 800px at 50% -10%,#1a2040 0%,var(--bg) 60%);color:var(--fg);}
+  #gate,#app{width:min(820px,94vw);max-width:820px;text-align:center;padding:18px;}
+  #gate{display:block} #app{display:none}
+  button{background:#1a213f;border:1px solid #2a335e;color:var(--muted);
+    border-radius:999px;padding:10px 20px;font-size:15px;cursor:pointer}
+  button:active{transform:translateY(1px)}
+  .orb-wrap{position:relative;width:min(70vmin,520px);aspect-ratio:1;margin:20px auto}
+  .orb{position:absolute;inset:0;border-radius:50%;display:grid;place-items:center;
+    background:radial-gradient(60% 60% at 50% 40%,rgba(255,255,255,.12),transparent),
+               linear-gradient(160deg,rgba(124,199,179,.28),rgba(124,166,199,.22));
+    transform:scale(var(--scale,1));transition:transform var(--t,300ms) ease-in-out}
+  .orb::before{content:"";position:absolute;inset:-10px;border-radius:50%;
+    background:conic-gradient(from -90deg,var(--accent) calc(var(--p)*1turn),rgba(255,255,255,.1) 0);
+    -webkit-mask:radial-gradient(closest-side,transparent calc(50% - 18px),black calc(50% - 18px));
+            mask:radial-gradient(closest-side,transparent calc(50% - 18px),black calc(50% - 18px))}
+  .hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:80%}
+  .hint #l1{font-size:min(5.5vmin,28px);font-weight:600}
+  .hint #l2{font-size:min(3.8vmin,18px);color:var(--muted);margin-top:6px}
+  button.big{position:absolute;inset:0;opacity:0;border:0;background:none;cursor:pointer;touch-action:none}
+  .mini{margin-top:12px}
+  footer{margin:14px 0 6px;text-align:center;font-size:12px;color:#99a8c0}
+  a.link{color:#7cc7b3}
+</style>
+</head>
+<body>
+
+<!-- Disclaimer gate -->
+<div id="gate">
+  <h2>Disclaimer</h2>
+  <p>This breathing timer is for relaxation only. It is not a medical device and does not
+  diagnose, treat, or prevent disease. Users with any health condition or medical concern
+  should consult a qualified healthcare professional before using breath-control exercises.</p>
+  <p>Stop immediately if you feel dizzy, light-headed, or unwell.</p>
+  <p>By continuing, you confirm that you have read and understood this notice.</p>
+  <button id="agree">I Understand &amp; Agree</button>
+</div>
+
+<!-- Main App -->
+<div id="app">
+  <div class="orb-wrap">
+    <div id="orb" class="orb" aria-live="polite" aria-atomic="true">
+      <div class="hint">
+        <div id="l1">Press & hold for in-breath</div>
+        <div id="l2">Release when lungs feel full</div>
+      </div>
+      <button id="press" class="big" aria-label="Press and hold for in-breath"></button>
+    </div>
+  </div>
+  <div class="mini"><button id="reset">Reset</button></div>
+  <footer>
+    © 2025 Jonathan Berry ·
+    <a class="link" href="https://github.com/yourusername/relaxation-breath" target="_blank" rel="noopener">credit + repo</a> ·
+    <a class="link" href="https://github.com/yourusername/relaxation-breath/issues/new?title=Usage%20notice&body=How%20you%27re%20using%20it%3A%20" target="_blank" rel="noopener">tell me you’re using this</a>
+  </footer>
+</div>
+
+<script>
+(function(){
+  // Gate
+  const gate=document.getElementById('gate');
+  const app=document.getElementById('app');
+  document.getElementById('agree').addEventListener('click',()=>{gate.style.display='none';app.style.display='block';});
+
+  // Timer
+  const orb=document.getElementById('orb');
+  const press=document.getElementById('press');
+  const l1=document.getElementById('l1');
+  const l2=document.getElementById('l2');
+  const reset=document.getElementById('reset');
+  const HOLD_MS=1500, MAX_GROW=0.6, GROW_REF=6000;
+
+  let phase='ready', inhaleStart=0, inhaleElapsed=0, rafGrow=null, rafProg=null, timers=[];
+
+  function setScale(s,t){orb.style.setProperty('--scale',s.toFixed(3)); if(t!=null)orb.style.setProperty('--t',t+'ms');}
+  function setProgress(p){document.documentElement.style.setProperty('--p',Math.max(0,Math.min(1,p)));}
+  function stopRAF(){ if(rafGrow){cancelAnimationFrame(rafGrow); rafGrow=null;} if(rafProg){cancelAnimationFrame(rafProg); rafProg=null;} }
+  function clearTimers(){ timers.forEach(t=>clearTimeout(t)); timers=[]; }
+  function toReady(){ stopRAF(); clearTimers(); phase='ready'; l1.textContent='Press & hold for in-breath'; l2.textContent='Release when lungs feel full'; setProgress(0); setScale(1,300); }
+
+  function animatePhase(dur,onUpdate,onDone){
+    stopRAF();
+    const start=performance.now();
+    (function step(){
+      const t=performance.now()-start, p=Math.min(1,t/dur);
+      setProgress(p);
+      if(onUpdate) onUpdate(Math.max(0,dur-t));
+      if(p<1){ rafProg=requestAnimationFrame(step);} else { rafProg=null; if(onDone) onDone(); }
+    })();
+  }
+
+  function onPressDown(){
+    if(phase!=='ready') return;
+    stopRAF(); clearTimers(); setProgress(0);
+    phase='in'; inhaleStart=performance.now(); l1.textContent='In-breath'; l2.textContent='Hold the button';
+    (function grow(){
+      const dt=performance.now()-inhaleStart, k=Math.min(1,dt/GROW_REF);
+      setScale(1+MAX_GROW*k);
+      rafGrow=requestAnimationFrame(grow);
+    })();
+  }
+
+  function startCycle(Tms){
+    const T=Math.max(50, Tms|0); // no cap
+    // Hold 1
+    phase='hold1'; l1.textContent='Hold'; l2.textContent='Soft stillness';
+    animatePhase(HOLD_MS,null,()=>{
+      // Out = 2× inhale with countdown
+      phase='out'; const outDur=T*2; l1.textContent='Out-breath';
+      animatePhase(outDur,(remain)=>{
+        const s=(remain/1000).toFixed(1);
+        l2.textContent='Slow, steady — '+s+'s';
+        const p=Math.max(0,Math.min(1,1-(remain/outDur)));
+        setScale(1+(MAX_GROW*(1-p)));
+      },()=>{
+        // Hold 2
+        phase='hold2'; l1.textContent='Hold'; l2.textContent='Settle'; setScale(1,300);
+        animatePhase(HOLD_MS,null,()=>{ toReady(); });
+      });
+    });
+  }
+
+  function onPressUp(){
+    if(phase!=='in') return;
+    const elapsed=performance.now()-inhaleStart; // exact press duration
+    inhaleElapsed=elapsed;
+    stopRAF();
+    startCycle(inhaleElapsed);
+  }
+
+  press.addEventListener('pointerdown',e=>{e.preventDefault();onPressDown();});
+  press.addEventListener('pointerup',e=>{e.preventDefault();onPressUp();});
+  press.addEventListener('pointercancel',e=>{e.preventDefault();if(phase==='in')onPressUp();});
+  press.addEventListener('pointerleave',e=>{e.preventDefault();if(phase==='in')onPressUp();});
+  // Touch fallback
+  press.addEventListener('touchstart',e=>{e.preventDefault();onPressDown();},{passive:false});
+  press.addEventListener('touchend',e=>{e.preventDefault();onPressUp();},{passive:false});
+  // Keyboard
+  let keyHold=false;
+  addEventListener('keydown',e=>{if(e.code==='Space'&&!keyHold){keyHold=true;e.preventDefault();onPressDown();}});
+  addEventListener('keyup',e=>{if(e.code==='Space'&&keyHold){keyHold=false;e.preventDefault();onPressUp();}});
+  // Reset
+  reset.addEventListener('click',toReady);
+  toReady();
+})();
+</script>
+</body>
+</html>
